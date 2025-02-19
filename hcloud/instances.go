@@ -48,6 +48,7 @@ type instances struct {
 var (
 	errServerNotFound     = errors.New("server not found")
 	errMissingRobotClient = errors.New("no robot client configured, make sure to enable Robot support in the configuration")
+	InternalIPKey         = "hcloud-cloud-controller-manager.io/internal-ip"
 )
 
 func newInstances(
@@ -91,7 +92,7 @@ func (i *instances) lookupServer(
 				return nil, nil
 			}
 
-			return hcloudServer{server}, nil
+			return hcloudServer{server, node}, nil
 		}
 
 		if i.robotClient == nil {
@@ -137,7 +138,7 @@ func (i *instances) lookupServer(
 
 	switch {
 	case cloudServer != nil:
-		return hcloudServer{cloudServer}, nil
+		return hcloudServer{cloudServer, node}, nil
 	case hrobotServer != nil:
 		return robotServer{hrobotServer, i.robotClient}, nil
 	default:
@@ -208,8 +209,12 @@ func hcloudNodeAddresses(
 	networkID int64,
 	server *hcloud.Server,
 	cfg config.HCCMConfiguration,
+	node *corev1.Node
 ) []corev1.NodeAddress {
 	var addresses []corev1.NodeAddress
+	for _, address := range node.Status.Addresses {
+		addresses = append(addresses, *address.DeepCopy())
+	}
 	addresses = append(
 		addresses,
 		corev1.NodeAddress{Type: corev1.NodeHostName, Address: server.Name},
@@ -296,6 +301,7 @@ type genericServer interface {
 
 type hcloudServer struct {
 	*hcloud.Server
+	node *corev1.Node
 }
 
 func (s hcloudServer) IsShutdown() (bool, error) {
@@ -306,7 +312,7 @@ func (s hcloudServer) Metadata(networkID int64, cfg config.HCCMConfiguration) (*
 	return &cloudprovider.InstanceMetadata{
 		ProviderID:    providerid.FromCloudServerID(s.ID),
 		InstanceType:  s.ServerType.Name,
-		NodeAddresses: hcloudNodeAddresses(networkID, s.Server, cfg),
+		NodeAddresses: hcloudNodeAddresses(networkID, s.Server, cfg, s.node),
 		Zone:          s.Datacenter.Name,
 		Region:        s.Datacenter.Location.Name,
 		AdditionalLabels: map[string]string{
